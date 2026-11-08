@@ -54,7 +54,7 @@ class FacilityManager:
         """
         result = []
         for facility in self.facilities:
-            if facility.district == district:
+            if facility.district == str(district).strip():
                 result.append(facility)
         return result
 
@@ -65,7 +65,7 @@ class FacilityManager:
         """
         result = []
         for facility in self.facilities:
-            if facility.facility_type == facility_type:
+            if facility.facility_type == str(facility_type).strip():
                 result.append(facility)
         return result
 
