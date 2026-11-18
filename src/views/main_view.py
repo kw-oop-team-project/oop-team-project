@@ -17,6 +17,21 @@ BIN_COLORS = {
 }
 DARK_BINS = ["6-9개", "10개 이상"] # 6-10 구간은 글자를 흰색으로
 
+BOX_STYLE = """
+<style>
+.st-key-type_box {
+    background-color: #EEF3FA;
+    border-radius: 12px;
+    padding: 16px 20px;
+}
+.st-key-type_box div[data-baseweb="select"] > div {
+    background-color: #FFFFFF;
+    border: 1px solid #C6D3E3;
+    border-radius: 8px;
+}
+</style>
+"""
+
 @st.cache_data
 def load_geojson():
     """자치구 경계 파일을 한 번만 읽어서 재사용"""
@@ -49,6 +64,16 @@ def get_district_centers(geo):
         centers[feat["properties"]["name"]] = (cx / (3*area), cy / (3*area))
     return centers
 
+def stat_card(icon, label, value, bg_color):
+    """아이콘과 배경색이 있는 통계 카드의 HTML"""
+    return (
+        f'<div style="background:{bg_color}; border-radius:16px; padding:20px 24px; '
+        f'display:flex; align-items:center; gap:20px;">'
+        f'<div style="font-size:40px;">{icon}</div>'
+        f'<div><div style="font-size:15px; color:#4A5568;">{label}</div>'
+        f'<div style="font-size:28px; font-weight:700; color:#14213D;">{value}</div></div>'
+        f'</div>')
+
 class MainView:
     """메인 화면: 시설 종류 선택, 자치구별 분포 지도, 핵심 통계 카드"""
 
@@ -60,8 +85,18 @@ class MainView:
 
     #시설 종류 선택
     def select_facility_type(self):
-        """시설 종류 선택창을 보여주고, 고른 종류를 돌려줌"""
-        return st.selectbox("시설 종류", self._manager.get_facility_types())
+        """시설 종류 선택창을 보여주고, 고른 종류를 돌려준다."""
+        with st.container(key="type_box"):
+            label_col, select_col, _ = st.columns([1, 3, 4], vertical_alignment="center")
+            with label_col:
+                st.markdown(
+                    '<p style="font-size:20px; font-weight:700; margin:0; margin-top:-12px;">시설 종류</p>',
+                    unsafe_allow_html=True,)
+            with select_col:
+                return st.selectbox(
+                    "시설 종류",
+                    self._manager.get_facility_types(),
+                    label_visibility="collapsed",)
 
     #지도 그리기
     def show_map(self, facility_type):
@@ -106,9 +141,20 @@ class MainView:
         fig.update_layout(
             height=600,
             margin=dict(l=0, r=0, t=0, b=0),
-            legend=dict(title_text=f"{facility_type} 수", y=0.5),
+            legend=dict(
+                title=dict(text=f"{facility_type} 수", font=dict(size=22)),
+                font=dict(size=20),
+                itemwidth=40,
+                bgcolor="white",
+                bordercolor="#D9E2EC",
+                borderwidth=1,
+                x=0.92,
+                y=0.5,
+            ),
         )
-        st.plotly_chart(fig, width = "stretch")
+        with st.container(border=True):
+            st.markdown("**서울시 지도**")
+            st.plotly_chart(fig, width="stretch")
 
     #통계 카드
     def show_summary(self, facility_type):
@@ -125,12 +171,16 @@ class MainView:
             top_text = f"{top_districts[0]} 외 {len(top_districts)-1}개 자치구 ({top_count}개)"
 
         c1, c2, c3 = st.columns(3)
-        c1.metric(f"서울 전체 {facility_type}", f"{total}개")
-        c2.metric("최다 보유 자치구", top_text)
-        c3.metric("보유 자치구", f"{coverage} / 25")
+        c1.markdown(stat_card("💪", f"서울 전체 {facility_type}", f"{total}개", "#EAF2FB"),
+                    unsafe_allow_html=True)
+        c2.markdown(stat_card("🥇", "최다 보유 자치구", top_text, "#EAF6EE"),
+                    unsafe_allow_html=True)
+        c3.markdown(stat_card("🚩", "보유 자치구", f"{coverage} / 25", "#F1EEFA"),
+                    unsafe_allow_html=True)
 
     def render(self):
         """메인 화면을 그림"""
+        st.markdown(BOX_STYLE, unsafe_allow_html=True)
         facility_type = self.select_facility_type()
         self.show_map(facility_type)
         self.show_summary(facility_type)
