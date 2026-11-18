@@ -10,6 +10,7 @@ from views.main_view import MainView, load_geojson
 
 st.set_page_config(page_title="서울체육맵", layout="wide")
 st.title("서울시 체육시설은 어디에?")
+st.caption("2024년 서울시 공공체육시설 현황")
 
 @st.cache_resource
 def load_data():
