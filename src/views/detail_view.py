@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from html import escape
 from collections import Counter
 from collections.abc import Iterable, Mapping
 from typing import Any, Protocol
@@ -216,3 +217,76 @@ def show_detail(facility: FacilityLike | None, *, ui: Any = None) -> None:
         ui.info("이 시설은 상세 탐색 대상에서 제외됩니다.")
         return
     ui.table(_detail_rows(facility))
+
+
+def show_facility_cards(facilities, selected_facility_id=None):
+    """목록의 시설 이름을 눌러 상세정보를 선택한다."""
+    from .main_view import select_facility
+
+    ui = get_ui(None)
+    if not facilities:
+        return
+    page_count = (len(facilities) - 1) // RESULT_PAGE_SIZE + 1
+    page = ui.session_state.get("result_page", 1)
+    if not 1 <= page <= page_count:
+        ui.session_state.result_page = 1
+    if page_count > 1:
+        page = ui.selectbox("목록 페이지", range(1, page_count + 1), key="result_page")
+    else:
+        page = 1
+    start = (page - 1) * RESULT_PAGE_SIZE
+    for facility in facilities[start : start + RESULT_PAGE_SIZE]:
+        with ui.container(border=True):
+            ui.markdown(
+                f'<span class="facility-tag">{escape(facility.district)}</span><span class="facility-tag">{escape(facility.facility_type or "종목 정보 없음")}</span>',
+                unsafe_allow_html=True,
+            )
+            ui.button(
+                facility.name,
+                key=f"facility_card_{facility.facility_id}",
+                on_click=select_facility,
+                args=(facility.facility_id,),
+                type="primary"
+                if facility.facility_id == selected_facility_id
+                else "secondary",
+                use_container_width=True,
+            )
+            ui.markdown(
+                f'<p class="facility-meta">{escape(facility.address or "주소 정보 없음")}</p>',
+                unsafe_allow_html=True,
+            )
+            ui.caption("제공기관: " + " · ".join(facility.sources))
+
+
+def show_facility_profile(facility):
+    """API가 제공하는 이용 정보를 중심으로 상세 화면을 구성한다."""
+    ui = get_ui(None)
+    ui.subheader("시설 상세정보")
+    if facility is None:
+        ui.info(
+            "지도 표시나 목록의 시설 이름을 누르면 상세정보와 예약 안내가 여기에 표시됩니다."
+        )
+        return
+    ui.markdown(
+        f'<div class="facility-profile-title">{escape(facility.name)}</div>',
+        unsafe_allow_html=True,
+    )
+    info = facility.get_info()
+    fields = (
+        ("district", "자치구"),
+        ("facility_type", "종목"),
+        ("address", "주소"),
+        ("hours", "운영시간"),
+        ("phone", "연락처"),
+        ("fee", "이용료"),
+        ("manager", "운영기관"),
+    )
+    rows = [
+        {"항목": label, "내용": display_value(info.get(key))} for key, label in fields
+    ]
+    if facility.size:
+        rows.append({"항목": "시설 규모", "내용": facility.size})
+    if facility.total_floor_area:
+        rows.append({"항목": "시설 총면적", "내용": facility.total_floor_area})
+    ui.table(rows)
+    show_facility_links(facility)

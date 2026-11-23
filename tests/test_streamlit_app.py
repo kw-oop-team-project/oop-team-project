@@ -20,9 +20,7 @@ def click_search(app):
 
 
 def select_facility(app, facility_id):
-    next(widget for widget in app.selectbox if widget.label == "시설 선택").set_value(
-        facility_id
-    ).run()
+    app.button(key=f"facility_card_{facility_id}").click().run()
     return app
 
 
@@ -39,11 +37,14 @@ class StreamlitAppTests(unittest.TestCase):
         self.env.start()
         self.addCleanup(self.env.stop)
 
-    def app(self):
+    def app(self, finder=True):
         app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=25)
         # 사용자가 입력하는 실제 로컬 인증 설정을 테스트에서 읽지 않는다.
         app.secrets = {"test_mode": True}
-        return app.run()
+        app.run()
+        if finder:
+            app.radio(key="main_navigation").set_value("체육시설 찾기").run()
+        return app
 
     def assert_healthy(self, app):
         self.assertEqual(len(app.exception), 0, str(app.exception))
@@ -59,7 +60,6 @@ class StreamlitAppTests(unittest.TestCase):
             self.assert_healthy(app)
             all_tables = "\n".join(table.value.to_string() for table in app.table)
             for value in (
-                "가상 구민수영장",
                 "06:00~22:00",
                 "성인 5,000원",
                 "접수중",
@@ -67,6 +67,7 @@ class StreamlitAppTests(unittest.TestCase):
                 "2026-11-30 18:00",
             ):
                 self.assertIn(value, all_tables)
+            self.assertTrue(any("가상 구민수영장" in x.value for x in app.markdown))
             links = [element.proto.url for element in app.get("link_button")]
             self.assertEqual(len([url for url in links if "rsv_svc_id=" in url]), 2)
             self.assertTrue(
@@ -81,7 +82,7 @@ class StreamlitAppTests(unittest.TestCase):
             self.assertEqual(app.session_state["selected_facility_id"], "seoul:1")
             app.selectbox(key="search_district").select("강남구")
             app.text_input(key="search_name").input("보완")
-            app.text_input(key="search_sport").input("수영")
+            app.selectbox(key="search_sport").set_value("수영")
             click_search(app)
             self.assert_healthy(app)
             self.assertIn("검색 결과 1개", [x.value for x in app.subheader])
@@ -179,7 +180,13 @@ class StreamlitAppTests(unittest.TestCase):
             app = click_search(self.app())
             self.assert_healthy(app)
             self.assertEqual(
-                len(next(w for w in app.selectbox if w.label == "시설 선택").options),
+                len(
+                    [
+                        b
+                        for b in app.button
+                        if b.key and b.key.startswith("facility_card_")
+                    ]
+                ),
                 25,
             )
             self.assertTrue(any("위치 좌표가 없습니다" in x.value for x in app.info))
@@ -189,8 +196,63 @@ class StreamlitAppTests(unittest.TestCase):
             select_facility(app, "seoul:125")
             self.assert_healthy(app)
             self.assertTrue(
-                any("가상 시설 25" in table.value.to_string() for table in app.table)
+                any("가상 시설 25" in value.value for value in app.markdown)
             )
+            app.radio(key="main_navigation").set_value("체육시설 현황").run()
+            app.radio(key="main_navigation").set_value("체육시설 찾기").run()
+            self.assertEqual(app.selectbox(key="result_page").value, 2)
+            self.assertEqual(app.session_state["selected_facility_id"], "seoul:125")
+
+    def test_home_and_overview_do_not_call_apis(self):
+        with patch("requests.Session.get") as request:
+            app = self.app(finder=False)
+            self.assert_healthy(app)
+            self.assertEqual(app.radio(key="main_navigation").value, "홈")
+            self.assertTrue(any("더 즐거운 움직임" in x.value for x in app.markdown))
+            app.button(key="home_overview_button").click().run()
+            self.assert_healthy(app)
+            self.assertEqual(app.radio(key="main_navigation").value, "체육시설 현황")
+            self.assertTrue(any("새로운 정보를 준비" in x.value for x in app.markdown))
+            request.assert_not_called()
+
+    def test_home_finder_button_loads_map_before_search(self):
+        with patch("requests.Session.get", side_effect=ApiHTTP()):
+            app = self.app(finder=False)
+            app.button(key="home_find_button").click().run()
+            self.assert_healthy(app)
+            self.assertEqual(app.radio(key="main_navigation").value, "체육시설 찾기")
+            self.assertIn("검색 결과 3개", [x.value for x in app.subheader])
+            self.assertTrue(app.get("deck_gl_json_chart"))
+            self.assertTrue(
+                any("서울시 공공체육시설 지도" == x.value for x in app.subheader)
+            )
+
+    def test_clear_selection_reset_filters_and_tab_persistence(self):
+        with patch("requests.Session.get", side_effect=ApiHTTP()):
+            app = self.app()
+            select_facility(app, "seoul:1")
+            app.button(key="clear_facility").click().run()
+            self.assertIsNone(app.session_state["selected_facility_id"])
+            app.selectbox(key="search_district").set_value("강남구")
+            app.selectbox(key="search_sport").set_value("수영")
+            click_search(app)
+            self.assertIn("검색 결과 1개", [x.value for x in app.subheader])
+            app.radio(key="main_navigation").set_value("체육시설 현황").run()
+            app.radio(key="main_navigation").set_value("체육시설 찾기").run()
+            self.assert_healthy(app)
+            self.assertIn("검색 결과 1개", [x.value for x in app.subheader])
+            self.assertEqual(app.selectbox(key="search_district").value, "강남구")
+            self.assertEqual(app.selectbox(key="search_sport").value, "수영")
+            app.button(key="reset_search").click().run()
+            self.assertIn("검색 결과 3개", [x.value for x in app.subheader])
+
+    def test_map_selection_accepts_only_displayed_facilities(self):
+        from src.views.main_view import map_facility_id
+
+        event = {"selection": {"objects": {"facilities": [{"facility_id": "one"}]}}}
+        self.assertEqual(map_facility_id(event, {"one"}), "one")
+        self.assertIsNone(map_facility_id(event, {"other"}))
+        self.assertIsNone(map_facility_id({}, {"one"}))
 
 
 if __name__ == "__main__":
