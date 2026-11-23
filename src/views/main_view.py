@@ -1,187 +1,103 @@
-import json
+"""시설 검색과 위치 탐색을 위한 메인 화면."""
+
+from html import escape
 
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
+import pydeck as pdk
 import streamlit as st
 
-GEOJSON_PATH = "data/seoul_districts.geojson"
+from src.config import DISTRICTS, FACILITY_CACHE_TTL, RESERVATION_CACHE_TTL
 
-BINS = ["0개", "1-2개", "3-5개", "6-9개", "10개 이상"]
-BIN_COLORS = {
-    "0개": "#EEF3FA",
-    "1-2개": "#C6DBEF",
-    "3-5개": "#6BAED6",
-    "6-9개": "#2171B5",
-    "10개 이상": "#08306B",
-}
-DARK_BINS = ["6-9개", "10개 이상"] # 6-10 구간은 글자를 흰색으로
 
-BOX_STYLE = """
-<style>
-.st-key-type_box {
-    background-color: #EEF3FA;
-    border-radius: 12px;
-    padding: 16px 20px;
-}
-.st-key-type_box div[data-baseweb="select"] > div {
-    background-color: #FFFFFF;
-    border: 1px solid #C6D3E3;
-    border-radius: 8px;
-}
-</style>
-"""
+_API_LINKS = (
+    (
+        "서울시 시설 API 문서",
+        "https://data.seoul.go.kr/dataList/OA-21779/A/1/datasetView.do",
+    ),
+    ("전국 시설 API 문서", "https://www.data.go.kr/data/15113986/openapi.do"),
+    (
+        "서울시 예약 API 문서",
+        "https://data.seoul.go.kr/dataList/OA-2266/A/1/datasetView.do",
+    ),
+)
 
-@st.cache_data
-def load_geojson():
-    """자치구 경계 파일을 한 번만 읽어서 재사용"""
-    with open(GEOJSON_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-def to_bin(count):
-    """시설 수를 색상 구간 이름으로 바꿈"""
-    if count == 0: return "0개"
-    elif count <= 2: return "1-2개"
-    elif count <= 5: return "3-5개"
-    elif count <= 9: return "6-9개"
-    else: return "10개 이상"
-
-def get_district_centers(geo):
-    """자치구마다 이름을 쓸 위치를 계산"""
-    centers ={}
-    for feat in geo["features"]:
-        polygons = feat["geometry"]["coordinates"]
-        if feat["geometry"]["type"] == "Polygon":
-            polygons = [polygons]
-        ring = max((polygon[0] for polygon in polygons), key=len)
-
-        area = cx = cy = 0
-        for (x1,y1),(x2,y2) in zip(ring, ring[1:]):
-            cross = x1 * y2 - x2 * y1
-            area += cross
-            cx += (x1 + x2) * cross
-            cy += (y1 + y2) * cross
-        centers[feat["properties"]["name"]] = (cx / (3*area), cy / (3*area))
-    return centers
-
-def stat_card(icon, label, value, bg_color):
-    """아이콘과 배경색이 있는 통계 카드의 HTML"""
-    return (
-        f'<div style="background:{bg_color}; border-radius:16px; padding:20px 24px; '
-        f'display:flex; align-items:center; gap:20px;">'
-        f'<div style="font-size:40px;">{icon}</div>'
-        f'<div><div style="font-size:15px; color:#4A5568;">{label}</div>'
-        f'<div style="font-size:28px; font-weight:700; color:#14213D;">{value}</div></div>'
-        f'</div>')
 
 class MainView:
-    """메인 화면: 시설 종류 선택, 자치구별 분포 지도, 핵심 통계 카드"""
+    def show_sidebar(self, manager):
+        with st.sidebar:
+            st.subheader("데이터 안내")
+            st.write("서울시와 국민체육진흥공단의 서울 공공체육시설을 함께 검색합니다.")
+            st.caption(
+                f"시설 정보는 최대 {FACILITY_CACHE_TTL // 60}분, "
+                f"예약 정보는 최대 {RESERVATION_CACHE_TTL // 60}분간 메모리에서 재사용합니다."
+            )
+            if st.button("API 정보 새로고침"):
+                manager.clear_cache()
+            for label, url in _API_LINKS:
+                st.link_button(label, url)
 
-    def __init__(self, manager, analyzer):
-        self._manager = manager
-        self._analyzer = analyzer
-        self._geo = load_geojson()
-        self._centers = get_district_centers(self._geo)
-
-    #시설 종류 선택
-    def select_facility_type(self):
-        """시설 종류 선택창을 보여주고, 고른 종류를 돌려준다."""
-        with st.container(key="type_box"):
-            label_col, select_col, _ = st.columns([1, 3, 4], vertical_alignment="center")
-            with label_col:
-                st.markdown(
-                    '<p style="font-size:20px; font-weight:700; margin:0; margin-top:-12px;">시설 종류</p>',
-                    unsafe_allow_html=True,)
-            with select_col:
-                return st.selectbox(
-                    "시설 종류",
-                    self._manager.get_facility_types(),
-                    label_visibility="collapsed",)
-
-    #지도 그리기
-    def show_map(self, facility_type):
-        """자치구별 시설 수를 색으로 칠한 지도를 그림"""
-        counts = self._analyzer.get_count_by_district(facility_type)
-
-        df = pd.DataFrame({
-            "자치구": list(counts.keys()),
-            "시설 수": list(counts.values()),
-        })
-        df["구간"] = df["시설 수"].apply(to_bin)
-
-        fig = px.choropleth(
-            df,                                         # 표를 넘김
-            geojson=self._geo,
-            locations="자치구",                          # 표의 "자치구" 열
-            featureidkey="properties.name",
-            color="구간",                                # 숫자 대신 구간으로 색칠
-            color_discrete_map=BIN_COLORS,               # 구간별 색 지정
-            category_orders={"구간": BINS},              # 범례 순서
-            hover_name="자치구",
-            hover_data={"자치구": False, "구간": False, "시설 수": True},
+    def search_form(self):
+        with st.form("facility_search"):
+            district_col, name_col, sport_col = st.columns([1, 2, 1])
+            district = district_col.selectbox(
+                "자치구", ["서울 전체", *DISTRICTS], key="search_district"
+            )
+            name = name_col.text_input(
+                "시설명", placeholder="예: 구민체육센터", key="search_name"
+            )
+            sport = sport_col.text_input(
+                "종목", placeholder="예: 수영, 테니스", key="search_sport"
+            )
+            submitted = st.form_submit_button("시설 검색", type="primary")
+        return submitted, (
+            "" if district == "서울 전체" else district,
+            name.strip(),
+            sport.strip(),
         )
-        fig.update_traces(marker_line_color="white", marker_line_width=1)  # 구 경계선 흰색
 
-        # 구 이름 글자 올리기
-        names = list(self._centers.keys())
-        fig.add_trace(go.Scattergeo(
-            lon=[self._centers[name][0] for name in names],
-            lat=[self._centers[name][1] for name in names],
-            text=names,
-            mode="text",
-            textfont=dict(
-                size=12,
-                color=["white" if to_bin(counts.get(name, 0)) in DARK_BINS else "#14213D"
-                       for name in names],
-            ),
-            hoverinfo="skip",
-            showlegend=False,
-        ))
-        fig.update_geos(fitbounds="locations", visible=False)
-        fig.update_layout(
-            height=600,
-            margin=dict(l=0, r=0, t=0, b=0),
-            legend=dict(
-                title=dict(text=f"{facility_type} 수", font=dict(size=22)),
-                font=dict(size=20),
-                itemwidth=40,
-                bgcolor="white",
-                bordercolor="#D9E2EC",
-                borderwidth=1,
-                x=0.92,
-                y=0.5,
-            ),
+    def show_map(self, facilities):
+        located = [
+            f for f in facilities if f.latitude is not None and f.longitude is not None
+        ]
+        st.subheader("시설 위치")
+        if not located:
+            st.info(
+                "현재 결과에 위치 좌표가 없습니다. 시설 상세의 주소와 지도 검색을 이용해 주세요."
+            )
+            return
+        points = pd.DataFrame(
+            [
+                {
+                    "lat": f.latitude,
+                    "lon": f.longitude,
+                    "name": escape(f.name),
+                    "address": escape(f.address),
+                    "sport": escape(f.facility_type),
+                }
+                for f in located
+            ]
         )
-        with st.container(border=True):
-            st.markdown("**서울시 지도**")
-            st.plotly_chart(fig, width="stretch")
-
-    #통계 카드
-    def show_summary(self, facility_type):
-        """통계 카드 3개를 보여줌"""
-        total = self._analyzer.get_total_count(facility_type)
-        top_districts, top_count = self._analyzer.get_top_district(facility_type)
-        coverage = self._analyzer.get_district_coverage(facility_type)
-
-        if top_count == 0:
-            top_text = "없음"
-        elif len(top_districts) == 1:
-            top_text = f"{top_districts[0]} ({top_count}개)"
-        else:
-            top_text = f"{top_districts[0]} 외 {len(top_districts)-1}개 자치구 ({top_count}개)"
-
-        c1, c2, c3 = st.columns(3)
-        c1.markdown(stat_card("💪", f"서울 전체 {facility_type}", f"{total}개", "#EAF2FB"),
-                    unsafe_allow_html=True)
-        c2.markdown(stat_card("🥇", "최다 보유 자치구", top_text, "#EAF6EE"),
-                    unsafe_allow_html=True)
-        c3.markdown(stat_card("🚩", "보유 자치구", f"{coverage} / 25", "#F1EEFA"),
-                    unsafe_allow_html=True)
-
-    def render(self):
-        """메인 화면을 그림"""
-        st.markdown(BOX_STYLE, unsafe_allow_html=True)
-        facility_type = self.select_facility_type()
-        self.show_map(facility_type)
-        self.show_summary(facility_type)
-        return facility_type
+        layer = pdk.Layer(
+            "ScatterplotLayer",
+            points,
+            get_position="[lon, lat]",
+            get_fill_color=[33, 113, 181, 210],
+            get_radius=100,
+            radius_min_pixels=6,
+            pickable=True,
+        )
+        st.pydeck_chart(
+            pdk.Deck(
+                layers=[layer],
+                initial_view_state=pdk.ViewState(
+                    latitude=float(points.lat.mean()),
+                    longitude=float(points.lon.mean()),
+                    zoom=10.5,
+                ),
+                map_style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+                tooltip={"html": "<b>{name}</b><br/>{sport}<br/>{address}"},
+            )
+        )
+        st.caption(
+            f"좌표가 제공된 {len(located)}개 시설을 표시합니다. 목록에서 시설을 선택해 상세정보를 확인하세요."
+        )

@@ -1,0 +1,129 @@
+# API 전환 검증 기록
+
+검증일: 2026-11-24 (Asia/Seoul).
+작업 시작 브랜치: `main`, HEAD `6b8187f`. 시작 시 미커밋 변경사항 없음.
+저장소와 상위 경로에서 적용할 `AGENTS.md`는 발견되지 않았습니다.
+커밋·푸시·브랜치 변경 없이 현재 브랜치의 로컬 변경으로 남겼습니다.
+
+## 제거 및 보존
+
+- 제거한 프로젝트 CSV: `data/공공체육시설.csv` (1개).
+- 제거한 종속 코드: `scripts/preprocess_facilities.py`, `src/facility_analyzer.py`.
+- 가상환경(`pyvenv.cfg`가 있는 디렉터리), `.runtime`, `site-packages`, `node_modules`,
+  `.git`을 제외하고 전 경로를 검사한 결과 프로젝트 CSV는 0개입니다.
+- 활성 앱·로더·검색·상세·지도·설정에 파일 기반 시설 데이터 로딩은 없습니다.
+  문서와 테스트의 CSV 언급은 제거 이력 및 회귀 검사입니다.
+- 팀원의 기존 커밋은 보존했습니다. 시설 객체/Manager/MainView/상세 선택 UI를
+  API 검색 구조로 발전시켰으며 기존 상세 화면 테스트 24개는 그대로 유지했습니다.
+- 전환 초기에는 GeoJSON·임시 주석 파일·개인 `local-context/` 작업 기록과 기존 가상환경을 보존했습니다.
+  과거 개인 메모의 데이터 언급은 현재 앱 실행에 사용되지 않습니다.
+
+## 변경 파일
+
+| 파일 | 변경 |
+|---|---|
+| `app.py` | 검색 → 지도/목록 → 상세 → 예약 안내 연결, 상태 안내, 목록 25개 단위 페이지 |
+| `src/__init__.py` | 표준 패키지 초기화 |
+| `src/config.py` | 환경변수/Streamlit secrets 및 서울 자치구 목록 |
+| `src/api_clients.py` | API 3개 요청, 페이징, 필드 매핑, 서울 공공시설 선별, 타임아웃, 메모리 캐시 |
+| `src/sports_facility.py` | 공통 객체, 시설 ID, 상세 필드와 출처 |
+| `src/facility_manager.py` | API 결과 합집합, 보수적 중복 통합, 세 조건 검색, 예약 매칭 |
+| `src/views/main_view.py` | 통계 지도를 시설 위치 지도로 전환, 검색 폼 |
+| `src/views/detail_view.py` | 기존 선택 UI 재사용, 주소/시간/연락처/요금 및 예약 표시 |
+| `tests/api_fixtures.py` | 실제 키를 포함하지 않는 가상 응답 |
+| `tests/test_api_search.py` | 페이징·선별·중복·검색·예약·캐시·오류·CSV 부재 검사 |
+| `tests/test_streamlit_app.py` | 실제 Streamlit AppTest로 UI 상호작용 검사 |
+| `requirements.txt` | Streamlit, pandas, pydeck, requests |
+| `.gitignore` | 검증용 의존성 폴더와 인증 설정 제외 |
+| `README.md` | API 방식 실행·설정·데이터 정책 문서화 |
+| 이 문서 | 검증 결과와 제한 |
+
+## 실행 결과
+
+검증 환경: Windows, Python 3.14.4, Streamlit 1.67.0.
+Streamlit이 기본 Python 환경에 없어 프로젝트의 Git 제외 폴더 `.runtime/`에 검증용 의존성을 설치했습니다.
+일반 개발 환경에서는 README의 `.venv` 설치 방법을 사용하면 됩니다.
+
+```powershell
+$env:PYTHONPATH = "$PWD\.runtime"
+python -B -m unittest discover -s tests -v
+python -B -m streamlit run app.py --global.developmentMode false --server.headless true
+```
+
+- **49개 테스트 통과**: 기존 상세 UI 24개 + API/검색 18개 + Streamlit 앱 7개.
+  별도 예약용 키와 공통 서울시 키 재사용 동작을 포함합니다.
+- CSV가 없는 상태에서 실제 `app.py`를 AppTest로 실행했습니다.
+- 자치구·시설명·종목 조합 검색, 0건, 첫 선택, 선택 유지/초기화, 상세 필드,
+  결과 목록 페이지 전환, 좌표 없는 시설, 중복 통합, 전국 API 단독 시설,
+  여러 예약 일정과 공식 링크, 예약 없음, 키 미설정, 시설/예약 API 장애를 검사했습니다.
+- 실제 HTTP 경계만 모의 응답으로 바꾸고 모델·클라이언트·캐시·Manager·UI는 실제 코드를 실행했습니다.
+- 실제 Streamlit 서버도 기동하여 `/` HTTP 200 및 `/_stcore/health` 200 `ok`를 확인했습니다.
+- Python 구문 검사와 `git diff --check`를 통과했습니다.
+- 브라우저 연결 도구가 `The browser access host is unavailable`을 반환하여 화면 캡처와
+  브라우저에서의 시각적 배치는 확인하지 못했습니다. AppTest는 실제 브라우저 검증과 구분합니다.
+
+## API별 실제 호출 여부
+
+전환 초기 검증 당시에는 환경과 프로젝트 secrets에 실제 API 키가 없었습니다.
+이후 사용자가 Git 제외 설정 파일에 키를 입력했으며 실제 인증 결과는 아래 추가 검증에 기록합니다.
+키 값과 인증키가 포함된 요청 URL은 출력하거나 검증 기록에 저장하지 않았습니다.
+
+| API | 모의 응답 검증 | 실제 호출 |
+|---|---|---|
+| [서울시 facilities](https://data.seoul.go.kr/dataList/OA-21779/A/1/datasetView.do) | 여러 페이지, 학교/민간 제외, 자치구 정규화, 시간/연락처/요금 매핑, 오류 | 공식 공개 `sample`, 1~5행 호출 성공. 5행 중 공공시설 4개, 학교시설 1개 제외 |
+| [국민체육진흥공단 전국체육시설](https://www.data.go.kr/data/15113986/openapi.do) | 요청 인자, 인코딩 키, 여러 페이지, 서울/공공 재필터, 기존 결과 보완, 중복/모호한 결과 분리, 장애 | 실제 키가 없어 호출하지 않음. 공식 페이지의 Swagger에서 endpoint와 필드 확인 |
+| [서울시 ListPublicReservationSport](https://data.seoul.go.kr/dataList/OA-2266/A/1/datasetView.do) | 여러 페이지·일정, 상태/기간, 다른 자치구/종목 제외, 모호한 시설 미연결, 공식 URL 제한 | 공식 공개 `sample`, 1~5행 호출 성공, 예약 5개 읽음 |
+
+공개 sample은 개인 인증키가 아니며 전체 자료 조회나 실제 키의 이용 승인 여부를 검증한 것은 아닙니다.
+sample 검증은 `page_size=5`, `max_pages=1`로 제한했으며 전체 건수가 더 크므로 의도대로
+`partial` 상태와 페이지 한도 안내를 반환했습니다. sample을 앱의 기본 키나 대체 데이터로 쓰지 않습니다.
+실제 키 설정 후 추가 검증 결과는 다음과 같습니다.
+
+## 실제 인증키 입력 후 추가 검증
+
+2026-11-24, 사용자가 `.streamlit/secrets.toml`에 직접 입력한 인증키를 사용했습니다.
+공식 API 클라이언트로 모든 페이지를 읽었으며 세 서비스 모두 `ok`로 완료했습니다.
+
+| 서비스 | 실제 결과 |
+|---|---|
+| 서울시 시설 | 897개 응답 중 공공시설 810개 선별, 학교 등 87개 제외 |
+| 국민체육진흥공단 | 1,837개 응답 중 서울 공공시설 1,835개 선별, 2개 제외 |
+| 서울시 예약 | 예약 일정 651개 수신 |
+
+- 보수적 중복 통합 후 검색 목록 2,644개. 두 제공기관의 일치 시설 1개를 통합했고
+  전국 API 단독 결과 1,834개를 포함합니다. 유효한 좌표가 있는 결과는 1,640개입니다.
+  이는 현재 조회 결과의 크기이며, 서울 전체 시설의 확정 집계나 나머지 중복이 없다는 뜻은 아닙니다.
+- 전체 자료에서 유일하게 연결되는 시설 45개, 예약 일정 222개를 확인했습니다.
+  이름·주소·종목이나 예약 장소의 표기가 다르거나 후보가 여러 개면 자동 연결하지 않습니다.
+- 실제 `app.py`를 실제 인증 설정과 HTTP 요청을 사용하는 Streamlit AppTest로 실행했습니다.
+- `구로구 / 신도림테니스장 / 테니스장` 검색 → 검색 결과 1개 → 시설 선택 →
+  상세 시설명·주소 표시 → 예약 일정 28개 및 공식 예약 링크 28개 표시를 확인했습니다.
+- 초기 화면·검색·상세 화면의 실행 예외 0개, API 오류 0개입니다.
+- 이번 추가 검증도 브라우저 시각 검증과는 구분합니다.
+- `.streamlit/secrets.toml`의 Git 제외를 재확인했습니다. 키 값은 이 문서·코드·로그·Git에 넣지 않았고,
+  커밋이나 푸시 없이 기존 로컬 변경 상태를 유지했습니다.
+
+## 후속 파일·코드 정리
+
+2026-11-24, 사용자의 파일 정리 요청에 따라 다음 미사용 파일을 제거했습니다.
+
+- `src/__init__.py (임시)`
+- `src/views/detail_view.py (임시)`
+- `scripts/make_districts.py (임시)`
+- `docs/images/(임시)`
+- `data/seoul_districts.geojson`
+
+API 전환으로 쓰지 않게 된 데이터·전처리·이미지 폴더는 비어 있으면 제거합니다.
+개인 참고자료와 예전 실험 코드가 있는 `local-context/`, 기존 가상환경과 검증용 `.runtime/`,
+실제 키가 든 `.streamlit/secrets.toml`은 보존합니다. 삭제한 추적 파일은 기존 Git 기록에 남아 있습니다.
+
+- HTTP 호출과 캐시를 `src/http_client.py`, 값 정규화를 `src/normalization.py`로 분리했습니다.
+- 공통 화면 처리와 상태 안내를 `src/views/common.py`, 예약 표시를 `src/views/reservation_view.py`로 분리했습니다.
+- 사이드바·목록 페이지·출처 링크 표시를 화면 모듈로 옮겨 `app.py`는 화면 흐름을 연결하도록 정리했습니다.
+- 타임아웃·캐시 TTL·API/화면 페이지 설정을 `src/config.py`에 모았습니다.
+- `.streamlit/secrets.example.toml`에 빈 설정 예시를 추가하고 실제 인증파일은 변경하지 않았습니다.
+- 현재 구조와 각 모듈의 책임은 README에 정리했습니다. 기존 49개 테스트가 모두 통과했습니다.
+- Python 코드와 테스트의 줄바꿈·들여쓰기를 통일했습니다. 테스트 시나리오는 유지했습니다.
+- 정리 후 실제 API 조회도 재확인했습니다. 서울시 810개·전국 API 1,835개 시설 조회가
+  모두 정상이며, 신도림테니스장 예약 28개와 공식 링크 28개가 실제 앱에 표시됐습니다.
+  실제 Streamlit AppTest의 실행 예외·API 오류는 모두 0개입니다.

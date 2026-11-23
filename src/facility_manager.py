@@ -1,107 +1,226 @@
-import pandas as pd
-from sports_facility import SportsFacility # 클래스 불러오기
+"""API 시설을 관리하고 검색·중복 제거·예약 연결을 담당한다."""
+
+from __future__ import annotations
+
+from copy import deepcopy
+from dataclasses import dataclass
+import re
+
+from .api_clients import FacilityApi, NATIONAL, RESERVATIONS, SEOUL, SourceResult
+from .http_client import JsonTransport
+from .normalization import clean, district_name, normalized, safe_url, sport_key
+
+
+def address_key(address):
+    address = clean(address).replace("서울특별시", "서울").replace("서울시", "서울")
+    # 건물번호의 하이픈은 보존한다. 도로명/지번 주소의 추측 변환은 하지 않는다.
+    return re.sub(r"[^\w가-힣-]", "", address.casefold())
+
+
+def identity(facility):
+    values = (
+        facility.district,
+        normalized(facility.name),
+        address_key(facility.address),
+        sport_key(facility.facility_type),
+    )
+    return values if all(values) else None
+
+
+def same_facility(first, second):
+    if identity(first) is None or identity(first) != identity(second):
+        return False
+    # 같은 건물의 다른 층/코트 등은 별도 시설로 유지한다.
+    return not (
+        first.address_detail
+        and second.address_detail
+        and normalized(first.address_detail) != normalized(second.address_detail)
+    )
+
+
+def merge_facilities(facilities):
+    result = []
+    seen_ids = set()
+    by_identity = {}
+    for original in facilities:
+        if original.facility_id in seen_ids:
+            continue
+        seen_ids.add(original.facility_id)
+        key = identity(original)
+        candidates = [
+            f
+            for f in by_identity.get(key, [])
+            if same_facility(f, original)
+            and not set(f.sources).intersection(original.sources)
+        ]
+        if len(candidates) != 1:
+            independent = deepcopy(original)
+            result.append(independent)
+            if key is not None:
+                by_identity.setdefault(key, []).append(independent)
+            continue
+        target = candidates[0]
+        # 서울시 상세정보를 우선하고, 누락된 값만 전국 API로 보완한다.
+        for attr in (
+            "owner",
+            "manager",
+            "area",
+            "size",
+            "total_floor_area",
+            "address_detail",
+            "hours",
+            "phone",
+            "fee",
+            "homepage",
+        ):
+            if not getattr(target, attr):
+                setattr(target, attr, getattr(original, attr))
+        if target.latitude is None or target.longitude is None:
+            target.latitude, target.longitude = original.latitude, original.longitude
+        target.sources = tuple(dict.fromkeys(target.sources + original.sources))
+        target.source_details.update(deepcopy(original.source_details))
+    return result
+
+
+@dataclass
+class SearchResult:
+    facilities: list
+    statuses: list[SourceResult]
+
+
+@dataclass
+class Reservation:
+    reservation_id: str
+    title: str
+    place: str
+    district: str
+    sport: str
+    status: str
+    receipt_start: str
+    receipt_end: str
+    use_start: str
+    use_end: str
+    fee: str
+    phone: str
+    url: str
+
+    @classmethod
+    def from_row(cls, row):
+        return cls(
+            clean(row.get("SVCID")),
+            clean(row.get("SVCNM")),
+            clean(row.get("PLACENM")),
+            district_name(row.get("AREANM")),
+            clean(row.get("MINCLASSNM")),
+            clean(row.get("SVCSTATNM")),
+            clean(row.get("RCPTBGNDT")),
+            clean(row.get("RCPTENDDT")),
+            clean(row.get("SVCOPNBGNDT")),
+            clean(row.get("SVCOPNENDDT")),
+            clean(row.get("PAYATNM")),
+            clean(row.get("TELNO")),
+            safe_url(row.get("SVCURL"), official_reservation=True),
+        )
+
+
+def reservation_score(facility, reservation):
+    if facility.district != reservation.district:
+        return 0
+    sport, requested = sport_key(facility.facility_type), sport_key(reservation.sport)
+    generic = sport in {
+        "생활체육관",
+        "종합체육시설",
+        "종합체육관",
+        "체육센터",
+        "다목적체육관",
+    }
+    compatible = sport == requested or bool(
+        set(sport.split("/")) & set(requested.split("/"))
+    )
+    if sport and requested and not compatible and not generic:
+        return 0
+    name, place, title = (
+        normalized(facility.name),
+        normalized(reservation.place),
+        normalized(reservation.title),
+    )
+    if not name or not place:
+        return 0
+    # 세부 코트명이 있는 시설을 우선한다. 장소명만 같은 다종목 시설은 연결하지 않는다.
+    title_match = re.search(
+        re.escape(name) + (r"(?!\d)" if name[-1:].isdigit() else ""), title
+    )
+    if title_match and len(name) >= 4 and (name == place or place in name):
+        return 3
+    if name == place:
+        return 2
+    if len(place) >= 4 and place in name and sport and compatible:
+        return 1
+    return 0
+
 
 class FacilityManager:
-    """manager = FacilityManager("data/공공체육시설.csv") 형태로 사용"""
-    def __init__(self, csv_path):
-        self.csv_path = csv_path # 전달받은 csv 경로 저장
-        self.facilities = [] # 시설 정보를 담을 리스트
-        self.load_data() # 데이터 로드
+    def __init__(self, seoul_api, national_api, reservation_api):
+        self.seoul_api = seoul_api
+        self.national_api = national_api
+        self.reservation_api = reservation_api
+
+    @classmethod
+    def from_settings(cls, settings):
+        # 각 서비스의 타임아웃/오류/캐시를 분리한다.
+        return cls(
+            FacilityApi(SEOUL, settings.seoul_key, JsonTransport()),
+            FacilityApi(NATIONAL, settings.national_key, JsonTransport()),
+            FacilityApi(
+                RESERVATIONS, settings.effective_reservation_key, JsonTransport()
+            ),
+        )
+
+    def clear_cache(self):
+        for api in (self.seoul_api, self.national_api, self.reservation_api):
+            api.transport.clear()
 
     def load_data(self):
-        df = pd.read_csv(self.csv_path)
-        for _, row in df.iterrows():
-            raw_district = str(row["시군구"]).strip() if pd.notna(row.get("시군구")) else ""
-            if not raw_district and pd.notna(row.get("시ㆍ군ㆍ구")):
-                raw_district = str(row["시ㆍ군ㆍ구"]).strip()
-            
-            raw_name = str(row["시설명"]).strip() if pd.notna(row.get("시설명")) else ""
-            
-            # 요약 행('계', '소계', '합계' 또는 '18', '34' 같은 단순 합계 숫자) 건너뛰기
-            if raw_district in ["계", "소계", "합계", "소개"] or raw_name in ["계", "소계", "합계"] or raw_name.isdigit():
-                continue
+        statuses = [self.seoul_api.fetch(), self.national_api.fetch()]
+        facilities = merge_facilities([f for result in statuses for f in result.items])
+        return SearchResult(facilities, statuses)
 
-            # 띄어쓰기 및 줄바꿈 정리
-            district = raw_district.replace(" ", "").replace("\n", " ") if raw_district else "기타"
-            name = raw_name.replace("\n", " ")
+    @staticmethod
+    def search(facilities, district="", name="", sport=""):
+        return [
+            facility
+            for facility in facilities
+            if (not district or district == facility.district)
+            and (not name or normalized(name) in normalized(facility.name))
+            and (
+                not sport
+                or sport_key(sport) in sport_key(facility.facility_type)
+                or normalized(sport) in normalized(facility.name)
+            )
+        ]
 
-            facility_type = str(row["시설종류"]).strip() if pd.notna(row.get("시설종류")) else "기타"
-            owner = str(row["소유기관"]).replace("\n", " ").strip() if pd.notna(row.get("소유기관")) else None
-            manager = str(row["관리주체"]).replace("\n", " ").strip() if pd.notna(row.get("관리주체")) else None
-            
-            raw_area = row.get("부지면적")
-            area = None
-            if pd.notna(raw_area):
-                cleaned_area = str(raw_area).replace(",", "").strip()
-                if cleaned_area:
-                    try:
-                        area = float(cleaned_area)
-                    except ValueError:
-                        area = None
-
-            
-            facility = SportsFacility(name, district, facility_type, owner, manager, area)
-            self.facilities.append(facility)
-
-    def get_all_facilities(self):
-        """전체 체육시설 목록을 반환한다."""
-        return self.facilities
-
-    def get_by_district(self, district):
-        """
-        입력받은 자치구에 속한 시설 목록만 반환한다
-        인자 : district (str) : 검색할 자치구 이름 (예: "마포구", "강남구" 등)
-        """
-        result = []
-        for facility in self.facilities:
-            if facility.district == str(district).strip():
-                result.append(facility)
-        return result
-
-    def get_by_type(self, facility_type):
-        """
-        입력받은 시설종류(종목)에 속한 시설 목록만 반환한다
-        인자 : facility_type (str) : 검색할 시설 종류(종목) (예: "체육관", "테니스장" 등)
-        """
-        result = []
-        for facility in self.facilities:
-            if facility.facility_type == str(facility_type).strip():
-                result.append(facility)
-        return result
-
-    def get_districts(self):
-        """
-        등록된 자치구 목록을 중복 없이 오름차순(가나다순)으로 정렬하여 반환합니다
-        UI 드롭다운 메뉴나 선택창 등을 만드실 때 활용할 수 있습니다
-        """
-        districts = {facility.district for facility in self.facilities if facility.district}
-        return sorted(list(districts))
-
-    def get_facility_types(self):
-        """
-        등록된 시설종류(종목) 목록을 중복 없이 오름차순(가나다순)으로 정렬하여 반환합니다
-        UI 드롭다운 메뉴나 선택창 등을 만드실 때 활용할 수 있습니다
-        """
-        types = {facility.facility_type for facility in self.facilities if facility.facility_type}
-        return sorted(list(types))
-
-
-
-"""테스트 역할"""
-if __name__ == "__main__":
-    # 1. FacilityManager 인스턴스 생성 (CSV 파일 경로 지정)
-    manager = FacilityManager("data/공공체육시설.csv")
-
-    # 2. 로드된 전체 시설 개수 확인
-    all_facilities = manager.get_all_facilities()
-    print(f"총 로드된 시설 수: {len(all_facilities)}개")
-
-    # 3. 자치구 및 종목 목록 확인
-    print(f"등록된 자치구 목록 ({len(manager.get_districts())}개): {manager.get_districts()[:5]} ...")
-    print(f"등록된 시설 종류 ({len(manager.get_facility_types())}개): {manager.get_facility_types()[:5]} ...")
-
-    # 4. 필터링 기능 테스트 (예: 마포구 체육시설 조회)
-    mapo_facilities = manager.get_by_district("마포구")
-    print(f"\n[마포구 체육시설 검색 결과: {len(mapo_facilities)}개]")
-    for fac in mapo_facilities[:3]:
-        print(f" - {fac}")
+    def get_reservations(self, selected, all_facilities):
+        result = self.reservation_api.fetch()
+        matched = []
+        seen = set()
+        for row in result.items:
+            reservation = Reservation.from_row(row)
+            scores = [
+                (reservation_score(f, reservation), f.facility_id)
+                for f in all_facilities
+            ]
+            best = max((score for score, _ in scores), default=0)
+            winners = {fid for score, fid in scores if score == best and score > 0}
+            # 동명/동일 장소 등으로 후보가 여러 개면 어느 시설에도 자동 연결하지 않는다.
+            if winners == {selected.facility_id}:
+                key = reservation.reservation_id or (
+                    reservation.title,
+                    reservation.receipt_start,
+                    reservation.use_start,
+                )
+                if key not in seen:
+                    matched.append(reservation)
+                    seen.add(key)
+        return SourceResult(
+            result.source, matched, result.state, result.message, result.rejected
+        )

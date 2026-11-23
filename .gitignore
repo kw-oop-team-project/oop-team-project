@@ -1,2 +1,17 @@
+# Python 실행 환경과 캐시
 venv/
+.venv*/
+.runtime/
 __pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# 개인 참고자료와 이전 실험 코드
+local-context/
+
+# 실제 인증 정보 (예시 파일은 추적)
+.streamlit/secrets.toml
+.env
+.env.*
+!.env.example

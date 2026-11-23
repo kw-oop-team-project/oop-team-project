@@ -1,6 +1,6 @@
-"""시설 목록과 상세정보를 표시하는 독립 화면 모듈.
+"""시설 목록과 상세정보를 표시하는 재사용 화면 모듈.
 
-임시 연동 계약:
+연동 계약:
 * 호출자는 Manager에서 조회한 시설 객체를 전달한다. 이 모듈은 데이터를 읽거나
   시설 종류/자치구를 필터링하지 않는다.
 * facility_id는 비어 있지 않은 고유 문자열이다. name, district,
@@ -18,10 +18,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 from collections import Counter
 from collections.abc import Iterable, Mapping
 from typing import Any, Protocol
+from urllib.parse import quote
+
+from ..config import RESULT_PAGE_SIZE
+from .common import display_value, get_ui
 
 
 class FacilityLike(Protocol):
@@ -37,7 +40,6 @@ class FacilityLike(Protocol):
     def get_info(self) -> Mapping[str, Any]: ...
 
 
-_MISSING = "정보 없음"
 _DETAIL_FIELDS = (
     ("name", "시설명"),
     ("district", "자치구"),
@@ -47,22 +49,12 @@ _DETAIL_FIELDS = (
     ("site_area", "부지면적"),
     ("building_area", "건축면적"),
     ("total_floor_area", "연면적"),
+    ("address", "주소"),
+    ("hours", "운영시간"),
+    ("phone", "연락처"),
+    ("fee", "이용료"),
+    ("size", "시설 규모"),
 )
-
-
-def _get_ui(ui: Any) -> Any:
-    if ui is not None:
-        return ui
-    import streamlit
-
-    return streamlit
-
-
-def _display_value(value: Any) -> str:
-    if value is None or (isinstance(value, float) and math.isnan(value)):
-        return _MISSING
-    text = str(value).strip()
-    return text if text else _MISSING
 
 
 def _facility_id(facility: FacilityLike) -> str:
@@ -73,12 +65,17 @@ def _facility_id(facility: FacilityLike) -> str:
 
 
 def _list_row(facility: FacilityLike) -> dict[str, str]:
-    """팀원 클래스의 목록 속성명 변경은 이 어댑터에 반영한다."""
-    return {
-        "시설명": _display_value(getattr(facility, "name", None)),
-        "자치구": _display_value(getattr(facility, "district", None)),
-        "시설 종류": _display_value(getattr(facility, "facility_type", None)),
+    """시설 객체를 목록 표시용 행으로 변환한다."""
+    row = {
+        "시설명": display_value(getattr(facility, "name", None)),
+        "자치구": display_value(getattr(facility, "district", None)),
+        "시설 종류": display_value(getattr(facility, "facility_type", None)),
     }
+    if getattr(facility, "address", ""):
+        row["주소"] = facility.address
+    if getattr(facility, "sources", ()):
+        row["제공기관"] = " · ".join(facility.sources)
+    return row
 
 
 def _detail_rows(facility: FacilityLike) -> list[dict[str, str]]:
@@ -89,7 +86,7 @@ def _detail_rows(facility: FacilityLike) -> list[dict[str, str]]:
     for key, label in _DETAIL_FIELDS:
         # 목록 속성과 상세정보의 동일 필드는 상세정보에 키가 없을 때만 보완한다.
         value = info.get(key, getattr(facility, key, None))
-        rows.append({"항목": label, "내용": _display_value(value)})
+        rows.append({"항목": label, "내용": display_value(value)})
     return rows
 
 
@@ -118,13 +115,15 @@ def show_facility_list(
         for facility_id, facility in by_id.items()
         if facility.has_detail()
     }
-    ui = _get_ui(ui)
+    ui = get_ui(ui)
     widget_state = getattr(ui, "session_state", None)
     last_result_key = f"{key_prefix}_last_returned_facility_id"
     ui.subheader("시설 목록")
     excluded_count = len(by_id) - len(eligible)
     if excluded_count:
-        ui.caption(f"상세정보가 없는 시설 {excluded_count}개는 상세 탐색에서 제외됩니다.")
+        ui.caption(
+            f"상세정보가 없는 시설 {excluded_count}개는 상세 탐색에서 제외됩니다."
+        )
     if not eligible:
         if widget_state is not None:
             widget_state[last_result_key] = None
@@ -136,7 +135,9 @@ def show_facility_list(
         ui.info(message)
         return None
 
-    rows = {facility_id: _list_row(facility) for facility_id, facility in eligible.items()}
+    rows = {
+        facility_id: _list_row(facility) for facility_id, facility in eligible.items()
+    }
     ui.table(list(rows.values()))
     name_counts = Counter(row["시설명"] for row in rows.values())
     labels = {}
@@ -174,9 +175,39 @@ def show_facility_list(
     return result
 
 
+def show_paged_facility_list(facilities, selected_facility_id=None):
+    """현재 결과의 한 페이지를 표시하고 선택한 시설 ID를 반환한다."""
+    ui = get_ui(None)
+    page = 1
+    if len(facilities) > RESULT_PAGE_SIZE:
+        page_count = (len(facilities) - 1) // RESULT_PAGE_SIZE + 1
+        page = ui.selectbox("목록 페이지", range(1, page_count + 1))
+        ui.caption(f"한 페이지에 {RESULT_PAGE_SIZE}개 시설을 표시합니다.")
+    start = (page - 1) * RESULT_PAGE_SIZE
+    return show_facility_list(
+        facilities[start : start + RESULT_PAGE_SIZE], selected_facility_id
+    )
+
+
+def show_facility_links(facility):
+    """시설의 출처·홈페이지·지도 링크를 표시한다."""
+    ui = get_ui(None)
+    ui.caption("제공기관: " + " · ".join(facility.sources))
+    if facility.homepage:
+        ui.link_button("시설 홈페이지", facility.homepage)
+    if facility.address:
+        query = quote(facility.address + " " + facility.name)
+        ui.link_button("주소로 지도 검색", "https://map.naver.com/p/search/" + query)
+    if len(facility.sources) > 1:
+        with ui.expander("제공기관별 원본 정보 비교"):
+            for source, info in facility.source_details.items():
+                ui.write(source)
+                ui.json(info)
+
+
 def show_detail(facility: FacilityLike | None, *, ui: Any = None) -> None:
     """선택 시설의 상세정보를 표시한다. 객체 조회와 선택 상태는 호출자가 관리한다."""
-    ui = _get_ui(ui)
+    ui = get_ui(ui)
     ui.subheader("시설 상세정보")
     if facility is None:
         ui.info("목록에서 시설을 선택하면 상세정보를 확인할 수 있습니다.")

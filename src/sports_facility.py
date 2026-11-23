@@ -1,32 +1,59 @@
-"""서울체육맵: 공공체육시설 한 개를 표현하는 클래스."""
+"""여러 공공 API의 시설 정보를 공통 객체로 표현한다."""
+
+from dataclasses import dataclass, field
+import hashlib
 
 
+@dataclass
 class SportsFacility:
-    def __init__(self, name, district, facility_type, owner=None,
-                 manager=None, area=None):
-        self.name = name
-        self.district = district
-        self.facility_type = facility_type
-        self.owner = owner
-        self.manager = manager
-        self.area = area
+    name: str
+    district: str
+    facility_type: str
+    owner: str | None = None
+    manager: str | None = None
+    area: str | float | None = None
+    facility_id: str = ""
+    address: str = ""
+    address_detail: str = ""
+    hours: str = ""
+    phone: str = ""
+    fee: str = ""
+    homepage: str = ""
+    latitude: float | None = None
+    longitude: float | None = None
+    sources: tuple[str, ...] = ()
+    source_details: dict = field(default_factory=dict)
+    size: str = ""
+    total_floor_area: str = ""
+
+    def __post_init__(self):
+        if not self.facility_id:
+            identity = "|".join(
+                (self.name, self.district, self.address, self.facility_type)
+            )
+            self.facility_id = (
+                "facility:" + hashlib.sha256(identity.encode()).hexdigest()[:20]
+            )
 
     def get_info(self):
-        """화면에 표시할 시설 정보를 딕셔너리로 반환한다."""
         return {
-            "시설명": self.name,
-            "자치구": self.district,
-            "시설종류": self.facility_type,
-            "소유기관": self.owner,
-            "관리주체": self.manager,
-            "부지면적": self.area,
+            "name": self.name,
+            "district": self.district,
+            "facility_type": self.facility_type,
+            "owner": self.owner,
+            "manager": self.manager,
+            "site_area": self.area,
+            "address": " ".join(filter(None, (self.address, self.address_detail))),
+            "hours": self.hours,
+            "phone": self.phone,
+            "fee": self.fee,
+            "size": self.size,
+            "total_floor_area": self.total_floor_area,
         }
 
     def has_detail(self):
-        """세부 정보를 확인할 수 있는 시설인지 판단한다."""
-        return self.facility_type != "간이운동장" and any(
-            value is not None for value in (self.owner, self.manager, self.area)
-        )
+        # 기본정보만 제공하는 API 시설도 검색·상세 화면에서 숨기지 않는다.
+        return True
 
     def __str__(self):
         return f"{self.name} ({self.district}, {self.facility_type})"

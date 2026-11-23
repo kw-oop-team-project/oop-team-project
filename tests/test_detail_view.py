@@ -56,14 +56,16 @@ class FakeUI:
         self.tables.append(copy.deepcopy(rows))
 
     def selectbox(self, label, *, options, index, format_func, key, placeholder):
-        self.selectboxes.append({
-            "label": label,
-            "options": list(options),
-            "index": index,
-            "labels": [format_func(option) for option in options],
-            "key": key,
-            "placeholder": placeholder,
-        })
+        self.selectboxes.append(
+            {
+                "label": label,
+                "options": list(options),
+                "index": index,
+                "labels": [format_func(option) for option in options],
+                "key": key,
+                "placeholder": placeholder,
+            }
+        )
         if self.selection is _DEFAULT_SELECTION:
             return options[index] if index is not None else None
         return self.selection
@@ -123,7 +125,9 @@ class FacilityListTests(unittest.TestCase):
         show_facility_list([FakeFacility("one")], "one", ui=original)
         show_facility_list([FakeFacility("two")], ui=changed_list)
         show_facility_list([FakeFacility("one")], None, ui=cleared)
-        self.assertNotEqual(original.selectboxes[0]["key"], changed_list.selectboxes[0]["key"])
+        self.assertNotEqual(
+            original.selectboxes[0]["key"], changed_list.selectboxes[0]["key"]
+        )
         self.assertEqual(original.selectboxes[0]["key"], cleared.selectboxes[0]["key"])
 
     def test_widget_state_supports_consecutive_choices_and_external_clear(self):
@@ -155,7 +159,9 @@ class FacilityListTests(unittest.TestCase):
         self.assertNotEqual(first.selectboxes[0]["key"], second.selectboxes[0]["key"])
 
     def test_detail_unavailable_facilities_are_excluded_without_reading_info(self):
-        excluded = FakeFacility("simple", facility_type="간이운동장", detail_available=False)
+        excluded = FakeFacility(
+            "simple", facility_type="간이운동장", detail_available=False
+        )
         ui = FakeUI()
         show_facility_list([excluded, FakeFacility("normal")], "simple", ui=ui)
         self.assertEqual(ui.selectboxes[0]["options"], ["normal"])
@@ -165,16 +171,18 @@ class FacilityListTests(unittest.TestCase):
 
     def test_all_facilities_excluded_shows_explanation(self):
         ui = FakeUI()
-        self.assertIsNone(show_facility_list(
-            [FakeFacility("simple", detail_available=False)], ui=ui
-        ))
+        self.assertIsNone(
+            show_facility_list([FakeFacility("simple", detail_available=False)], ui=ui)
+        )
         self.assertTrue(ui.messages)
         self.assertTrue(ui.captions)
         self.assertFalse(ui.selectboxes)
 
     def test_missing_listing_information_uses_placeholder(self):
         ui = FakeUI()
-        show_facility_list([FakeFacility("one", name=None, district=" ", facility_type="")], ui=ui)
+        show_facility_list(
+            [FakeFacility("one", name=None, district=" ", facility_type="")], ui=ui
+        )
         self.assertEqual(set(ui.tables[0][0].values()), {"정보 없음"})
 
     def test_missing_or_invalid_id_is_contract_error(self):
@@ -184,7 +192,9 @@ class FacilityListTests(unittest.TestCase):
 
     def test_duplicate_id_is_contract_error(self):
         with self.assertRaises(ValueError):
-            show_facility_list([FakeFacility("same"), FakeFacility("same")], ui=FakeUI())
+            show_facility_list(
+                [FakeFacility("same"), FakeFacility("same")], ui=FakeUI()
+            )
 
     def test_generator_input_is_consumed_once_and_objects_are_unchanged(self):
         facilities = [FakeFacility("one"), FakeFacility("two")]
@@ -202,10 +212,16 @@ class FacilityDetailTests(unittest.TestCase):
 
     def test_detail_contains_identity_ownership_management_and_areas(self):
         ui = FakeUI()
-        facility = FakeFacility("one", info={
-            "owner": "서울시", "manager": "시설관리공단",
-            "site_area": 1000, "building_area": 250, "total_floor_area": 500,
-        })
+        facility = FakeFacility(
+            "one",
+            info={
+                "owner": "서울시",
+                "manager": "시설관리공단",
+                "site_area": 1000,
+                "building_area": 250,
+                "total_floor_area": 500,
+            },
+        )
         show_detail(facility, ui=ui)
         details = {row["항목"]: row["내용"] for row in ui.tables[0]}
         self.assertEqual(details["시설명"], "테스트 수영장")
@@ -218,8 +234,13 @@ class FacilityDetailTests(unittest.TestCase):
         self.assertEqual(details["연면적"], "500")
 
     def test_missing_values_and_zero_are_distinguished_without_mutating_info(self):
-        info = {"owner": None, "manager": "  ", "site_area": 0,
-                "building_area": float("nan"), "total_floor_area": ""}
+        info = {
+            "owner": None,
+            "manager": "  ",
+            "site_area": 0,
+            "building_area": float("nan"),
+            "total_floor_area": "",
+        }
         facility = FakeFacility("one", info=info)
         ui = FakeUI()
         show_detail(facility, ui=ui)
@@ -244,10 +265,14 @@ class FacilityDetailTests(unittest.TestCase):
             show_detail(FakeFacility("one", info=None), ui=FakeUI())
 
     def test_selected_duplicate_name_resolves_to_correct_details(self):
-        facilities = [FakeFacility("one", info={"manager": "첫 번째 관리자"}),
-                      FakeFacility("two", info={"manager": "두 번째 관리자"})]
+        facilities = [
+            FakeFacility("one", info={"manager": "첫 번째 관리자"}),
+            FakeFacility("two", info={"manager": "두 번째 관리자"}),
+        ]
         selected_id = show_facility_list(facilities, ui=FakeUI(selection="two"))
-        selected = next(facility for facility in facilities if facility.facility_id == selected_id)
+        selected = next(
+            facility for facility in facilities if facility.facility_id == selected_id
+        )
         ui = FakeUI()
         show_detail(selected, ui=ui)
         self.assertIn({"항목": "관리주체", "내용": "두 번째 관리자"}, ui.tables[0])
