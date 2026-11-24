@@ -4,6 +4,7 @@ import streamlit as st
 
 from src.config import ApiSettings, RESULT_PAGE_SIZE
 from src.facility_manager import FacilityManager
+from src.overview_data import OverviewService
 from src.views.common import show_api_status
 from src.views.detail_view import show_facility_cards, show_facility_profile
 from src.views.main_view import MainView, select_facility
@@ -14,6 +15,11 @@ from src.views.site_layout import HOME, OVERVIEW, SiteLayout
 @st.cache_resource(show_spinner=False)
 def get_manager(settings):
     return FacilityManager.from_settings(settings)
+
+
+@st.cache_resource(show_spinner=False)
+def get_overview_service(settings):
+    return OverviewService.from_settings(settings)
 
 
 def _load_settings():
@@ -111,7 +117,7 @@ def main():
     if page == HOME:
         layout.home()
     elif page == OVERVIEW:
-        layout.overview()
+        layout.overview(get_overview_service(_load_settings()))
     else:
         show_finder(get_manager(_load_settings()))
     layout.footer()

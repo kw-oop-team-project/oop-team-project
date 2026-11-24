@@ -88,17 +88,10 @@ class SiteLayout:
             unsafe_allow_html=True,
         )
 
-    def overview(self):
-        st.markdown(
-            """<div class="section-heading"><div class="eyebrow">SEOUL SPORTS INSIGHT</div>
-            <h1>서울시 공공체육시설 현황</h1><p>서울의 운동 공간을 더 깊이 알아보는 곳</p></div>
-            <section class="coming-soon"><div class="eyebrow">COMING SOON</div><h2>새로운 정보를 준비하고 있습니다</h2>
-            <p>공공체육시설 현황은 다음 단계에서 제공할 예정입니다.<br>지금은 체육시설 찾기에서 원하는 운동 공간을 만나보세요.</p></section>""",
-            unsafe_allow_html=True,
-        )
-        st.button(
-            "체육시설 찾기로 이동", on_click=navigate, args=(FINDER,), type="primary"
-        )
+    def overview(self, service):
+        from .overview_view import OverviewView
+
+        OverviewView().render(service)
 
     def footer(self):
         st.markdown(

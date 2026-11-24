@@ -203,16 +203,12 @@ class StreamlitAppTests(unittest.TestCase):
             self.assertEqual(app.selectbox(key="result_page").value, 2)
             self.assertEqual(app.session_state["selected_facility_id"], "seoul:125")
 
-    def test_home_and_overview_do_not_call_apis(self):
+    def test_home_does_not_call_apis(self):
         with patch("requests.Session.get") as request:
             app = self.app(finder=False)
             self.assert_healthy(app)
             self.assertEqual(app.radio(key="main_navigation").value, "홈")
             self.assertTrue(any("더 즐거운 움직임" in x.value for x in app.markdown))
-            app.button(key="home_overview_button").click().run()
-            self.assert_healthy(app)
-            self.assertEqual(app.radio(key="main_navigation").value, "체육시설 현황")
-            self.assertTrue(any("새로운 정보를 준비" in x.value for x in app.markdown))
             request.assert_not_called()
 
     def test_home_finder_button_loads_map_before_search(self):
