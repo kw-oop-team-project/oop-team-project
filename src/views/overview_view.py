@@ -111,7 +111,7 @@ def bar_spec(label, height):
 
 class OverviewView:
     def render(self, service):
-        st.markdown(
+        st.html(
             """<style>
         .overview-intro { padding:28px 0 18px; }
         .overview-intro h1 { font-size:38px; margin:0 0 12px; }
@@ -122,7 +122,6 @@ class OverviewView:
         </style><div class="overview-intro"><div class="eyebrow">SEOUL SPORTS INSIGHT</div>
         <h1>서울시 공공체육시설 현황</h1><p>서울의 운동 공간은 어떻게 분포되어 있을까요?<br>
         제공기관의 등록자료를 기준으로 자치구별 분포와 시설 종류를 비교합니다.</p></div>""",
-            unsafe_allow_html=True,
         )
 
         saved = st.session_state.get("overview_filters", (NATIONAL, ALL_TYPES, True))
