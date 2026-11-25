@@ -161,9 +161,22 @@ def reservation_score(facility, reservation):
 
 class FacilityManager:
     def __init__(self, seoul_api, national_api, reservation_api):
-        self.seoul_api = seoul_api
-        self.national_api = national_api
-        self.reservation_api = reservation_api
+        # 외부에서 API 클라이언트를 임의로 교체하지 못하도록 비공개 속성으로 캡슐화한다.
+        self.__seoul_api = seoul_api
+        self.__national_api = national_api
+        self.__reservation_api = reservation_api
+
+    @property
+    def seoul_api(self):
+        return self.__seoul_api
+
+    @property
+    def national_api(self):
+        return self.__national_api
+
+    @property
+    def reservation_api(self):
+        return self.__reservation_api
 
     @classmethod
     def from_settings(cls, settings):
@@ -177,11 +190,11 @@ class FacilityManager:
         )
 
     def clear_cache(self):
-        for api in (self.seoul_api, self.national_api, self.reservation_api):
+        for api in (self.__seoul_api, self.__national_api, self.__reservation_api):
             api.transport.clear()
 
     def load_data(self):
-        statuses = [self.seoul_api.fetch(), self.national_api.fetch()]
+        statuses = [self.__seoul_api.fetch(), self.__national_api.fetch()]
         facilities = merge_facilities([f for result in statuses for f in result.items])
         return SearchResult(facilities, statuses)
 
@@ -200,17 +213,28 @@ class FacilityManager:
         ]
 
     def get_reservations(self, selected, all_facilities):
-        result = self.reservation_api.fetch()
+        result = self.__reservation_api.fetch()
         matched = []
         seen = set()
+
+        # 매 예약마다 전체 시설을 순회하지 않도록 자치구별로 시설을 미리 분류한다.
+        by_district = {}
+        for facility in all_facilities:
+            by_district.setdefault(facility.district, []).append(facility)
+
         for row in result.items:
             reservation = Reservation.from_row(row)
-            scores = [
-                (reservation_score(f, reservation), f.facility_id)
-                for f in all_facilities
-            ]
+            candidates = by_district.get(reservation.district, [])
+            if not candidates:
+                continue
+
+            scores = []
+            for f in candidates:
+                scores.append((reservation_score(f, reservation), f.facility_id))
+
             best = max((score for score, _ in scores), default=0)
             winners = {fid for score, fid in scores if score == best and score > 0}
+
             # 동명/동일 장소 등으로 후보가 여러 개면 어느 시설에도 자동 연결하지 않는다.
             if winners == {selected.facility_id}:
                 key = reservation.reservation_id or (

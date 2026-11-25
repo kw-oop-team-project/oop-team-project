@@ -343,6 +343,16 @@ class ApiSearchTests(unittest.TestCase):
             )
         self.assertEqual(managed_csv, [])
 
+    def test_facility_manager_api_clients_are_read_only(self):
+        # FacilityManager의 내부 API 클라이언트가 읽기 전용 프로퍼티로 보호되는지 검증한다.
+        manager = self.manager()
+        with self.assertRaises(AttributeError):
+            manager.seoul_api = None
+        with self.assertRaises(AttributeError):
+            manager.national_api = None
+        with self.assertRaises(AttributeError):
+            manager.reservation_api = None
+
 
 if __name__ == "__main__":
     unittest.main()

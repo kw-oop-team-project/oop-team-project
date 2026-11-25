@@ -139,12 +139,13 @@ class MainView:
             get_fill_color="color",
             get_radius="radius",
             radius_min_pixels=5,
+            radius_max_pixels=14, # 지도확대시 점 크기 제한
             get_line_color=[255, 255, 255],
             line_width_min_pixels=1,
             stroked=True,
             pickable=True,
             auto_highlight=True,
-        )
+        ) 
         allowed_ids = {f.facility_id for f in located}
         st.pydeck_chart(
             pdk.Deck(
