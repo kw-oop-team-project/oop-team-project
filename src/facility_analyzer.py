@@ -82,10 +82,11 @@ class FacilityAnalyzer:
         )
         return dict(sorted(counts.items(), key=lambda item: (-item[1], item[0])))
 
-    def get_district_type_counts(self, include_simple=True):
+    def get_district_type_counts(self, include_simple=True,
+                                 facility_type=ALL_TYPES):
         counts = {district: {} for district in self.districts}
 
-        for facility in self.select(include_simple=include_simple):
+        for facility in self.select(facility_type, include_simple):
             district = facility.district
             kind = facility_kind(facility)
 
@@ -120,3 +121,50 @@ class FacilityAnalyzer:
             result[label] = other
 
         return result
+
+    def get_summary(self, facility_type=ALL_TYPES, include_simple=True):
+        district_type_counts = self.get_district_type_counts(
+            include_simple, facility_type
+        )
+
+        counts = {
+            district: sum(types.values())
+            for district, types in district_type_counts.items()
+        }
+
+        diversity = {
+            district: len(types)
+            for district, types in district_type_counts.items()
+        }
+
+        total = sum(counts.values())
+        maximum = max(counts.values(), default=0)
+
+        leaders = [
+            district
+            for district, count in counts.items()
+            if count == maximum and maximum > 0
+        ]
+
+        coverage = sum(count > 0 for count in counts.values())
+
+        type_counts = Counter()
+
+        for types in district_type_counts.values():
+            type_counts.update(types)
+
+        type_counts = dict(sorted(
+            type_counts.items(),
+            key=lambda item: (-item[1], item[0])
+        ))
+
+        return {
+            "district_counts": counts,
+            "district_type_counts": district_type_counts,
+            "diversity": diversity,
+            "total": total,
+            "leaders": leaders,
+            "maximum": maximum,
+            "coverage": coverage,
+            "type_counts": type_counts
+        }

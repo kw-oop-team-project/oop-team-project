@@ -269,9 +269,12 @@ class OverviewView:
                 "일부 페이지의 수신 자료만 집계했습니다. 아래 수치·순위는 전체 현황이 아니며, 0건인 지역도 실제 시설이 없다는 뜻은 아닙니다."
             )
 
-        counts = analyzer.get_count_by_district(facility_type, include_simple)
-        total = sum(counts.values())
-        leaders, maximum = analyzer.get_top_district(facility_type, include_simple)
+        summary = analyzer.get_summary(facility_type, include_simple)
+
+        counts = summary["district_counts"]
+        total = summary["total"]
+        leaders = summary["leaders"]
+        maximum = summary["maximum"]
         leader_label = (
             " · ".join(leaders)
             if len(leaders) <= 2
@@ -290,7 +293,7 @@ class OverviewView:
             )
             coverage_col.metric(
                 "수신 자료가 있는 자치구" if partial else "시설 보유 자치구",
-                f"{analyzer.get_district_coverage(facility_type, include_simple)} / 25",
+                f"{summary['coverage']} / 25",
             )
         if leaders:
             title = "공동 최다" if len(leaders) > 1 else "최다 등록"
@@ -312,14 +315,8 @@ class OverviewView:
         diversity = {}
 
         if facility_type == ALL_TYPES:
-            district_type_counts = analyzer.get_district_type_counts(
-                include_simple=include_simple
-            )
-
-            diversity = {
-                district: len(types)
-                for district, types in district_type_counts.items()
-            }
+            district_type_counts = summary["district_type_counts"]
+            diversity = summary["diversity"]
 
             chart = FacilityChart()
 
@@ -384,7 +381,7 @@ class OverviewView:
                 "시설 데이터의 기준 연도를 뜻하지 않습니다."
             )
 
-        type_counts = analyzer.get_count_by_type(facility_type, include_simple)
+        type_counts = summary["type_counts"]
         type_data = count_table(type_counts, "시설 종류")
         with st.container(border=True):
             st.subheader("시설 종류별 구성")
