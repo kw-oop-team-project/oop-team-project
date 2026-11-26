@@ -81,3 +81,42 @@ class FacilityAnalyzer:
             facility_kind(f) for f in self.select(facility_type, include_simple)
         )
         return dict(sorted(counts.items(), key=lambda item: (-item[1], item[0])))
+
+    def get_district_type_counts(self, include_simple=True):
+        counts = {district: {} for district in self.districts}
+
+        for facility in self.select(include_simple=include_simple):
+            district = facility.district
+            kind = facility_kind(facility)
+
+            if kind not in counts[district]:
+                counts[district][kind] = 0
+
+            counts[district][kind] += 1
+
+        return counts
+
+    def get_district_diversity(self, include_simple=True):
+        counts = self.get_district_type_counts(include_simple)
+
+        return {
+            district: len(types)
+            for district, types in counts.items()
+        }
+
+    def get_top_type_counts(self, counts, top_n=5):
+        ranked = sorted(
+            counts.items(),
+            key=lambda item: (-item[1], item[0])
+        )
+
+        result = dict(ranked[:top_n])
+        other = sum(count for _, count in ranked[top_n:])
+
+        if other > 0:
+            label = "기타(나머지)"
+            while label in counts:
+                label += "*"
+            result[label] = other
+
+        return result

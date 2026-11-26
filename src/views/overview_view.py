@@ -13,6 +13,8 @@ from ..config import DISTRICTS
 from ..facility_analyzer import ALL_TYPES, FacilityAnalyzer
 from .common import show_api_status
 
+from .facility_chart import FacilityChart
+
 BOUNDARY_PATH = (
     Path(__file__).resolve().parents[2] / "assets" / "seoul-districts-2015.geojson"
 )
@@ -27,12 +29,40 @@ def district_boundaries():
     return geo
 
 
-def district_map_spec(counts):
-    """지역 집계만 브라우저에 전달한다. 시설명·좌표는 포함하지 않는다."""
+def district_map_spec(counts, pie_images=None, pie_counts=None):
+    """지역 집계만 브라우저에 전달한다."""
     features = deepcopy(district_boundaries()["features"])
+
     for feature in features:
         name = feature["properties"]["SIG_KOR_NM"]
-        feature["properties"] = {"district": name, "count": counts[name]}
+
+        properties = {
+            "district": name,
+            "count": counts[name]
+        }
+
+        if pie_counts:
+            properties["title"] = (
+                f"자치구: {name}\n"
+                f"등록자료(건): {counts[name]:,}"
+            )
+
+            properties["image"] = pie_images.get(name) or ""
+
+            for i in range(6):
+                properties[f"legend_{i}"] = ""
+
+            total = counts[name]
+
+            for i, (kind, count) in enumerate(pie_counts[name].items()):
+                ratio = count / total * 100
+
+                properties[f"legend_{i}"] = (
+                    f"{kind}  {count:,}건 ({ratio:.1f}%)"
+                )
+
+        feature["properties"] = properties
+            
     return {
         "data": {"values": features},
         "projection": {"type": "mercator"},
@@ -51,15 +81,40 @@ def district_map_spec(counts):
                 },
                 "legend": {"title": "등록자료(건)", "orient": "bottom", "format": "d"},
             },
-            "tooltip": [
-                {"field": "properties.district", "type": "nominal", "title": "자치구"},
-                {
-                    "field": "properties.count",
-                    "type": "quantitative",
-                    "title": "등록자료(건)",
-                    "format": ",d",
-                },
-            ],
+            "tooltip": (
+                [
+                    {
+                        "field": "properties.title",
+                        "type": "nominal",
+                        "title": "title",
+                    },
+                    {
+                        "field": "properties.image",
+                        "type": "nominal",
+                        "title": "image",
+                    },
+                ] + [
+                    {
+                        "field": f"properties.legend_{i}",
+                        "type": "nominal",
+                        "title": f"범례{i + 1}",
+                    }
+                    for i in range(6)
+                ]
+                if pie_counts else [
+                    {
+                        "field": "properties.district",
+                        "type": "nominal",
+                        "title": "자치구",
+                    },
+                    {
+                        "field": "properties.count",
+                        "type": "quantitative",
+                        "title": "등록자료(건)",
+                        "format": ",d",
+                    },
+                ]
+            ),
         },
         "height": 430,
         "config": {"view": {"stroke": None}},
@@ -108,9 +163,54 @@ def bar_spec(label, height):
         "config": {"view": {"stroke": None}},
     }
 
+def pie_tooltip_style():
+    selector = "#vg-tooltip-element:has(> h2)"
+
+    styles = f"""
+    {selector} h2 {{
+        white-space: pre-line;
+        border-bottom: 1px solid #d1d5db;
+        padding-bottom: 8px;
+        margin-bottom: 8px;
+        text-align: left;
+    }}
+
+    {selector} img {{
+        display: block;
+        margin: 8px auto;
+        width: 150px;
+    }}
+
+    {selector} td.key {{
+        font-size: 0;
+    }}
+
+    {selector} tr:has(td.value:empty) {{
+        display: none;
+    }}
+
+    {selector} td.key::before {{
+        content: "";
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border-radius: 2px;
+        margin-right: 5px;
+    }}
+    """
+
+    for i, color in enumerate(FacilityChart.COLORS, start=1):
+        styles += f"""
+        {selector} tr:nth-child({i}) td.key::before {{
+            background-color: {color};
+        }}
+        """
+
+    return f"<style>{styles}</style>"
 
 class OverviewView:
     def render(self, service):
+        st.html(pie_tooltip_style())
         st.html(
             """<style>
         .overview-intro { padding:28px 0 18px; }
@@ -201,6 +301,22 @@ class OverviewView:
                 if partial
                 else "선택한 조건에 해당하는 등록 시설이 0건입니다."
             )
+        
+        pie_images = {}
+        pie_counts = {}
+
+        if facility_type == ALL_TYPES:
+            district_type_counts = analyzer.get_district_type_counts(
+                include_simple=include_simple
+            )
+
+            chart = FacilityChart()
+
+            for district, type_counts in district_type_counts.items():
+                top_counts = analyzer.get_top_type_counts(type_counts)
+
+                pie_counts[district] = top_counts
+                pie_images[district] = chart.create_pie_chart(top_counts)
 
         district_data = count_table(counts, "자치구")
         with st.container(border=True):
@@ -209,7 +325,7 @@ class OverviewView:
             with map_col:
                 try:
                     st.vega_lite_chart(
-                        spec=district_map_spec(counts),
+                        spec=district_map_spec(counts, pie_images, pie_counts),
                         width="stretch",
                         key="overview_map",
                     )

@@ -89,6 +89,39 @@ class FacilityAnalyzerTests(unittest.TestCase):
         self.assertNotIn("private-id", json.dumps(spec))
         self.assertEqual(json.dumps(district_boundaries(), ensure_ascii=False), before)
 
+        def test_district_type_analysis(self):
+            analyzer = FacilityAnalyzer([
+                facility("a", "노원구", "수영장"),
+                facility("b", "노원구", "수영장"),
+                facility("c", "노원구", "축구장"),
+                facility("d", "강남구", "체육관"),
+                facility("e", "노원구", "간이운동장"),
+            ])
+
+            counts = analyzer.get_district_type_counts()
+
+            self.assertEqual(counts["노원구"]["수영장"], 2)
+            self.assertEqual(counts["노원구"]["축구장"], 1)
+            self.assertEqual(counts["종로구"], {})
+
+            diversity = analyzer.get_district_diversity()
+
+            self.assertEqual(diversity["노원구"], 3)
+            self.assertEqual(diversity["강남구"], 1)
+
+            filtered = analyzer.get_district_type_counts(
+                include_simple=False
+            )
+
+            self.assertNotIn("간이운동장", filtered["노원구"])
+
+            top = analyzer.get_top_type_counts(
+                counts["노원구"], top_n=1
+            )
+
+            self.assertEqual(top["수영장"], 2)
+            self.assertEqual(top["기타(나머지)"], 2)
+
 
 class OverviewServiceTests(unittest.TestCase):
     def test_cache_refresh_expiry_and_sources_are_independent(self):
