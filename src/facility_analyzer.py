@@ -24,25 +24,47 @@ def is_simple_facility(facility):
 
 class FacilityAnalyzer:
     def __init__(self, facilities, districts=DISTRICTS):
-        self.districts = tuple(districts)
+        self._districts = tuple(districts)
+        self._duplicate_ids = 0
+        self._excluded_districts = 0
+
         seen = set()
-        self.facilities = []
-        self.duplicate_ids = 0
-        self.excluded_districts = 0
+        validated = []
+
         for facility in facilities:
-            if facility.district not in self.districts:
-                self.excluded_districts += 1
+            if facility.district not in self._districts:
+                self._excluded_districts += 1
                 continue
+
             if facility.facility_id in seen:
-                self.duplicate_ids += 1
+                self._duplicate_ids += 1
                 continue
+
             seen.add(facility.facility_id)
-            self.facilities.append(facility)
+            validated.append(facility)
+
+        self._facilities = tuple(validated)
+
+    @property
+    def facilities(self):
+        return list(self._facilities)
+
+    @property
+    def districts(self):
+        return self._districts
+
+    @property
+    def duplicate_ids(self):
+        return self._duplicate_ids
+
+    @property
+    def excluded_districts(self):
+        return self._excluded_districts
 
     def select(self, facility_type=ALL_TYPES, include_simple=True):
         return [
             facility
-            for facility in self.facilities
+            for facility in self._facilities
             if (include_simple or not is_simple_facility(facility))
             and (facility_type == ALL_TYPES or facility_kind(facility) == facility_type)
         ]

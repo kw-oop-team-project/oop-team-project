@@ -161,6 +161,30 @@ class FacilityAnalyzerTests(unittest.TestCase):
                     analyzer.get_count_by_type(facility_type, include_simple)
                 )
 
+    def test_analyzer_encapsulation(self):
+        analyzer = FacilityAnalyzer([
+            facility("a", "노원구", "수영장"),
+            facility("b", "강남구", "축구장"),
+        ])
+
+        # 외부에서 시설 목록을 수정해도 내부 목록은 유지
+        facilities = analyzer.facilities
+        facilities.clear()
+
+        self.assertEqual(analyzer.get_total_count(), 2)
+
+        # 읽기 전용 속성에 직접 대입하면 오류 발생
+        with self.assertRaises(AttributeError):
+            analyzer.facilities = []
+
+        with self.assertRaises(AttributeError):
+            analyzer.districts = ("노원구",)
+
+        with self.assertRaises(AttributeError):
+            analyzer.duplicate_ids = 100
+
+        with self.assertRaises(AttributeError):
+            analyzer.excluded_districts = 100
 
 class OverviewServiceTests(unittest.TestCase):
     def test_cache_refresh_expiry_and_sources_are_independent(self):
