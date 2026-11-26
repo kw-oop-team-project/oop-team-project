@@ -54,7 +54,7 @@ def district_map_spec(counts, pie_images=None, pie_counts=None, diversity=None):
 
             properties["image"] = pie_images.get(name) or ""
 
-            for i in range(6):
+            for i in range(FacilityChart.TOP_N + 1):
                 properties[f"legend_{i}"] = ""
 
             total = counts[name]
@@ -104,7 +104,7 @@ def district_map_spec(counts, pie_images=None, pie_counts=None, diversity=None):
                         "type": "nominal",
                         "title": f"범례{i + 1}",
                     }
-                    for i in range(6)
+                    for i in range(FacilityChart.TOP_N + 1)
                 ]
                 if pie_counts else [
                     {
@@ -321,7 +321,9 @@ class OverviewView:
             chart = FacilityChart()
 
             for district, type_counts in district_type_counts.items():
-                top_counts = analyzer.get_top_type_counts(type_counts)
+                top_counts = analyzer.get_top_type_counts(
+                    type_counts, top_n=FacilityChart.TOP_N
+                )
 
                 pie_counts[district] = top_counts
                 pie_images[district] = chart.create_pie_chart(top_counts)
@@ -374,7 +376,7 @@ class OverviewView:
             st.caption(
                 "지역 위에 마우스를 올리면 자치구명과 등록 건수가 표시됩니다.  \n"
                 "전체 종류 선택 시 시설 종류 수와 종류별 구성 비율을 원형 그래프로 확인할 수 있습니다.  \n"
-                "원형 그래프는 상위 5개 시설 종류를 표시하며, 나머지는 기타로 합산합니다."
+                f"원형 그래프는 상위 {FacilityChart.TOP_N}개 시설 종류를 표시하며, 나머지는 기타로 합산합니다."
             )
             st.caption(
                 "지도 경계: JUSO 2015 / southkorea-seoul-maps (Apache 2.0). "

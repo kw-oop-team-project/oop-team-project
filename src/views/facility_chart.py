@@ -5,6 +5,8 @@ import base64
 # 원형 그래프를 생성하는 클래스
 
 class FacilityChart:
+    TOP_N = 5
+
     COLORS = (
         "#2563eb",
         "#14b8a6",
