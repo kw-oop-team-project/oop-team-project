@@ -29,7 +29,7 @@ def district_boundaries():
     return geo
 
 
-def district_map_spec(counts, pie_images=None, pie_counts=None):
+def district_map_spec(counts, pie_images=None, pie_counts=None, diversity=None):
     """지역 집계만 브라우저에 전달한다."""
     features = deepcopy(district_boundaries()["features"])
 
@@ -46,6 +46,11 @@ def district_map_spec(counts, pie_images=None, pie_counts=None):
                 f"자치구: {name}\n"
                 f"등록자료(건): {counts[name]:,}"
             )
+
+            if diversity is not None:
+                properties["title"] += (
+                    f"\n시설 종류 수(종): {diversity[name]}"
+                )
 
             properties["image"] = pie_images.get(name) or ""
 
@@ -304,11 +309,17 @@ class OverviewView:
         
         pie_images = {}
         pie_counts = {}
+        diversity = {}
 
         if facility_type == ALL_TYPES:
             district_type_counts = analyzer.get_district_type_counts(
                 include_simple=include_simple
             )
+
+            diversity = {
+                district: len(types)
+                for district, types in district_type_counts.items()
+            }
 
             chart = FacilityChart()
 
@@ -325,7 +336,7 @@ class OverviewView:
             with map_col:
                 try:
                     st.vega_lite_chart(
-                        spec=district_map_spec(counts, pie_images, pie_counts),
+                        spec=district_map_spec(counts, pie_images, pie_counts, diversity),
                         width="stretch",
                         key="overview_map",
                     )
@@ -333,19 +344,45 @@ class OverviewView:
                     st.warning(
                         "경계 지도를 표시할 수 없습니다. 자치구별 그래프와 집계표에서 수치를 확인해 주세요."
                     )
-                st.caption(
-                    "색이 진할수록 등록자료가 많습니다. 지역 위에 마우스를 올리면 구명과 건수가 표시됩니다. 회색은 이번 집계에서 0건인 지역입니다."
-                )
-                st.caption(
-                    "지도 경계: JUSO 2015 / southkorea·seoul-maps (Apache 2.0). 시설 데이터의 기준 연도를 뜻하지 않습니다."
-                )
+
             with graph_col:
+                district_chart_data = district_data.copy()
+                district_chart_spec = bar_spec("자치구", 430)
+
+                if facility_type == ALL_TYPES:
+
+                    district_chart_data["시설 종류 수"] = (
+                        district_chart_data["자치구"].map(diversity)
+                    )
+
+                    district_chart_spec["encoding"]["tooltip"].append(
+                        {
+                            "field": "시설 종류 수",
+                            "title": "시설 종류 수(종)",
+                            "type": "quantitative",
+                            "format": "d",
+                        }
+                    )
+
                 st.vega_lite_chart(
-                    district_data,
-                    spec=bar_spec("자치구", 430),
+                    district_chart_data,
+                    spec=district_chart_spec,
                     width="stretch",
                     key="overview_district_chart",
                 )
+
+            st.caption(
+                "색이 진할수록 등록자료가 많습니다. 회색 지역은 이번 집계에서 0건인 지역입니다."
+            )
+            st.caption(
+                "지역 위에 마우스를 올리면 자치구명과 등록 건수가 표시됩니다.  \n"
+                "전체 종류 선택 시 시설 종류 수와 종류별 구성 비율을 원형 그래프로 확인할 수 있습니다.  \n"
+                "원형 그래프는 상위 5개 시설 종류를 표시하며, 나머지는 기타로 합산합니다."
+            )
+            st.caption(
+                "지도 경계: JUSO 2015 / southkorea-seoul-maps (Apache 2.0). "
+                "시설 데이터의 기준 연도를 뜻하지 않습니다."
+            )
 
         type_counts = analyzer.get_count_by_type(facility_type, include_simple)
         type_data = count_table(type_counts, "시설 종류")
