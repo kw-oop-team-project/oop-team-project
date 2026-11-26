@@ -10,6 +10,8 @@ from unittest.mock import Mock, patch
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
+from src.views.facility_chart import FacilityChart
+
 from api_fixtures import ApiHTTP, NATIONAL_ROWS
 from src.api_clients import NATIONAL, SEOUL, SourceResult
 from src.config import DISTRICTS, FACILITY_CACHE_TTL
@@ -185,6 +187,54 @@ class FacilityAnalyzerTests(unittest.TestCase):
 
         with self.assertRaises(AttributeError):
             analyzer.excluded_districts = 100
+
+    def test_map_pie_tooltip(self):
+        analyzer = FacilityAnalyzer([
+            facility("a", "노원구", "수영장"),
+            facility("b", "노원구", "수영장"),
+            facility("c", "노원구", "축구장"),
+        ])
+
+        summary = analyzer.get_summary()
+        counts = summary["district_counts"]
+        diversity = summary["diversity"]
+
+        chart = FacilityChart()
+        pie_counts = {}
+        pie_images = {}
+
+        for district, types in summary["district_type_counts"].items():
+            pie_counts[district] = analyzer.get_top_type_counts(types)
+            pie_images[district] = chart.create_pie_chart(
+                pie_counts[district]
+            )
+
+        spec = district_map_spec(
+            counts, pie_images, pie_counts, diversity
+        )
+
+        properties = {
+            f["properties"]["district"]: f["properties"]
+            for f in spec["data"]["values"]
+        }
+
+        nowon = properties["노원구"]
+
+        self.assertEqual(nowon["count"], 3)
+        self.assertIn("시설 종류 수(종): 2", nowon["title"])
+        self.assertTrue(
+            nowon["image"].startswith("data:image/png;base64,")
+        )
+        self.assertEqual(
+            nowon["legend_0"], "수영장  2건 (66.7%)"
+        )
+
+        # 등록 시설이 없는 자치구
+        jongno = properties["종로구"]
+
+        self.assertEqual(jongno["count"], 0)
+        self.assertEqual(jongno["image"], "")
+        self.assertIn("시설 종류 수(종): 0", jongno["title"])
 
 class OverviewServiceTests(unittest.TestCase):
     def test_cache_refresh_expiry_and_sources_are_independent(self):

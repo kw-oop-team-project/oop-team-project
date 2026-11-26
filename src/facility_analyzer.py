@@ -83,12 +83,24 @@ class FacilityAnalyzer:
     def get_total_count(self, facility_type=ALL_TYPES, include_simple=True):
         return sum(self.get_count_by_district(facility_type, include_simple).values())
 
-    def get_top_district(self, facility_type=ALL_TYPES, include_simple=True):
-        counts = self.get_count_by_district(facility_type, include_simple)
+    def _calculate_top_district(self, counts):
         maximum = max(counts.values(), default=0)
+
         if not maximum:
             return [], 0
-        return [name for name, count in counts.items() if count == maximum], maximum
+
+        leaders = [
+            district
+            for district, count in counts.items()
+            if count == maximum
+        ]
+
+        return leaders, maximum
+    
+    def get_top_district(self, facility_type=ALL_TYPES, include_simple=True):
+        counts = self.get_count_by_district(facility_type, include_simple)
+
+        return self._calculate_top_district(counts)
 
     def get_district_coverage(self, facility_type=ALL_TYPES, include_simple=True):
         return sum(
@@ -159,13 +171,7 @@ class FacilityAnalyzer:
         }
 
         total = sum(counts.values())
-        maximum = max(counts.values(), default=0)
-
-        leaders = [
-            district
-            for district, count in counts.items()
-            if count == maximum and maximum > 0
-        ]
+        leaders, maximum = self._calculate_top_district(counts)
 
         coverage = sum(count > 0 for count in counts.values())
 
