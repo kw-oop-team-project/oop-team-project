@@ -75,7 +75,7 @@ class FacilityAnalyzer:
         )
 
     def get_count_by_district(self, facility_type=ALL_TYPES, include_simple=True):
-        counts = dict.fromkeys(self.districts, 0)
+        counts = dict.fromkeys(self._districts, 0)
         for facility in self.select(facility_type, include_simple):
             counts[facility.district] += 1
         return counts
@@ -104,9 +104,8 @@ class FacilityAnalyzer:
         )
         return dict(sorted(counts.items(), key=lambda item: (-item[1], item[0])))
 
-    def get_district_type_counts(self, include_simple=True,
-                                 facility_type=ALL_TYPES):
-        counts = {district: {} for district in self.districts}
+    def get_district_type_counts(self, include_simple=True, facility_type=ALL_TYPES):
+        counts = {district: {} for district in self._districts}
 
         for facility in self.select(facility_type, include_simple):
             district = facility.district
