@@ -121,7 +121,7 @@ def district_map_spec(counts, pie_images=None, pie_counts=None, diversity=None):
                 ]
             ),
         },
-        "height": 430,
+        "height": 500,
         "config": {"view": {"stroke": None}},
     }
 
@@ -150,7 +150,13 @@ def bar_spec(label, height):
                 "type": "nominal",
                 "sort": "-x",
                 "title": None,
-                "axis": {"labelLimit": 220},
+                "axis": {
+                    "labelLimit": 220,
+                    "labelOverlap": False,
+                    "labelFontSize": 11,
+                    "labelFlush": False,
+                    "labelBaseline": "middle",
+                },
             },
             "x": {
                 "field": "등록 시설 수(건)",
@@ -346,7 +352,7 @@ class OverviewView:
 
             with graph_col:
                 district_chart_data = district_data.copy()
-                district_chart_spec = bar_spec("자치구", 430)
+                district_chart_spec = bar_spec("자치구", 500)
 
                 if facility_type == ALL_TYPES:
 
